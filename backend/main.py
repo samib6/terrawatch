@@ -216,7 +216,7 @@ async def narrate_risk(
                 "Implement community-based early warning systems and evacuation plans for flood events",
                 "Expand urban green spaces and cool roofs to reduce heat island effects and lower energy demand"
             ]
-            
+            1
             return NarrateResponse(
                 risk_brief=fallback_brief,
                 adaptation_actions=fallback_actions,
