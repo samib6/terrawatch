@@ -38,18 +38,16 @@ function App() {
 
   // Fetch all cities when year changes
   useEffect(() => {
-    const fetchCities = async () => {
-      try {
-        const response = await axios.get(`${config.API_BASE}/api/cities?year=${debouncedYear}`);
-        setCities(response.data);
+    axios.get(`${config.API_BASE}/api/cities?year=${debouncedYear}`)
+      .then(response => {
+        setDisasters(response.data);
         setBackendError(false);
-      } catch (error) {
-        console.error('Failed to fetch cities:', error);
-        setCities([]);
+      })
+      .catch(error => {
+        console.error('Failed to fetch risk data:', error);
+        setDisasters([]);
         setBackendError(true);
-      }
-    };
-    fetchCities();
+      });
   }, [debouncedYear]);
 
   // Fetch real-time risk analysis and AI analysis for selected city - THIS UPDATES WHEN YEAR CHANGES
@@ -134,33 +132,56 @@ function App() {
   const handleMarkerClick = (city) => {
     setSelectedCity(city);
     setSidePanelOpen(true);
+    setLoading(true);
+    setNarration('');
+    setInsurance(null);
+
+    // Fetch narration and insurance data
+    Promise.all([
+      axios.get(`${config.API_BASE}/api/narrate?city=${encodeURIComponent(disaster.city)}&year=${debouncedYear}`),
+      axios.get(`${config.API_BASE}/api/insurance?city=${encodeURIComponent(disaster.city)}&year=${debouncedYear}`)
+    ]).then(([narrateRes, insuranceRes]) => {
+      setNarration(narrateRes.data);
+      setInsurance(insuranceRes.data);
+      setLoading(false);
+    }).catch(error => {
+      console.error('Failed to fetch city data:', error);
+      setNarration({
+        risk_brief: 'Unable to load AI analysis at this time. Please try again later.',
+        adaptation_actions: []
+      });
+      setInsurance(null);
+      setLoading(false);
+    });
   };
 
   const handleSearch = async () => {
     if (!searchQuery.trim()) return;
 
-    try {
-      const response = await axios.get(`${config.API_BASE}/api/search?q=${encodeURIComponent(searchQuery)}`);
-      const results = response.data;
-      if (results && results.length > 0) {
-        const result = results[0]; // Take the first result
-        const searchedCityData = {
-          city: result.city,
-          lat: result.latitude,
-          lng: result.longitude,
-          country: result.country
-        };
-        setSearchedCity(searchedCityData);
-        setSelectedCity(searchedCityData);
-        setSidePanelOpen(true);
-        setFlyTo({ center: [result.latitude, result.longitude], zoom: 10 });
-      } else {
+    axios.get(`${config.API_BASE}/api/search?q=${encodeURIComponent(searchQuery)}`)
+      .then(response => {
+        const results = response.data;
+        if (results && results.length > 0) {
+          const result = results[0]; // Take the first result
+          // Fly to location
+          setFlyTo({ center: [result.latitude, result.longitude], zoom: 10 });
+          // Create a city object for the marker (without risk data initially)
+          const searchedCityData = {
+            city: result.city,
+            lat: result.latitude,
+            lng: result.longitude,
+            risk: 0.5, // Default risk for searched cities
+            risk_level: 'Unknown',
+            type: 'Searched Location'
+          };
+          setSearchedCity(searchedCityData);
+        } else {
+          alert(`City "${searchQuery}" not found. Please try a different city name.`);
+        }
+      }).catch(error => {
+        console.error('Failed to search for city:', error);
         alert(`City "${searchQuery}" not found. Please try a different city name.`);
-      }
-    } catch (error) {
-      console.error('Failed to search for city:', error);
-      alert(`City "${searchQuery}" not found. Please try a different city name.`);
-    }
+      });
   };
 
   return (
@@ -305,82 +326,32 @@ function App() {
               </div>
             ) : (
               <div>
-                {/* Risk Assessment Section */}
-                <div style={{ marginBottom: '25px', paddingBottom: '20px', borderBottom: '1px solid #eee' }}>
-                  <h4 style={{ margin: '0 0 15px 0', color: '#1f2937' }}>Risk Assessment ({debouncedYear})</h4>
-                  
-                  {selectedCityRiskData ? (
+                <div style={{ marginBottom: '20px' }}>
+                  <h4>Risk Assessment ({debouncedYear})</h4>
+                  {insurance ? (
                     <>
-                      {/* Flood Risk */}
-                      <div style={{ marginBottom: '15px' }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '5px', fontSize: '0.95rem' }}>
-                          <span style={{ fontWeight: '500' }}>Flood Risk:</span>
-                          <span style={{ fontWeight: '600', color: getColor(selectedCityRiskData.flood_risk) }}>
-                            {Math.round(selectedCityRiskData.flood_risk * 100)}%
-                          </span>
-                        </div>
-                        <div style={{ background: '#e5e7eb', height: '8px', borderRadius: '4px', overflow: 'hidden' }}>
-                          <div style={{
-                            background: getColor(selectedCityRiskData.flood_risk),
-                            height: '100%',
-                            borderRadius: '4px',
-                            width: `${Math.min(selectedCityRiskData.flood_risk * 100, 100)}%`,
-                            transition: 'width 0.3s ease'
-                          }}></div>
-                        </div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '10px' }}>
+                        <span>Flood Risk:</span>
+                        <span>{Math.round((insurance.flood_multiplier - 1) * 100)}%</span>
+                      </div>
+                      <div style={{ background: '#e5e7eb', height: '10px', borderRadius: '5px', marginBottom: '15px' }}>
+                        <div style={{ background: getColor((insurance.flood_multiplier - 1) / 2.5), height: '100%', borderRadius: '5px', width: `${Math.min((insurance.flood_multiplier - 1) * 100 / 2.5, 100)}%` }}></div>
                       </div>
 
-                      {/* Heat Risk */}
-                      <div style={{ marginBottom: '15px' }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '5px', fontSize: '0.95rem' }}>
-                          <span style={{ fontWeight: '500' }}>Heat Risk:</span>
-                          <span style={{ fontWeight: '600', color: getColor(selectedCityRiskData.heat_risk) }}>
-                            {Math.round(selectedCityRiskData.heat_risk * 100)}%
-                          </span>
-                        </div>
-                        <div style={{ background: '#e5e7eb', height: '8px', borderRadius: '4px', overflow: 'hidden' }}>
-                          <div style={{
-                            background: getColor(selectedCityRiskData.heat_risk),
-                            height: '100%',
-                            borderRadius: '4px',
-                            width: `${Math.min(selectedCityRiskData.heat_risk * 100, 100)}%`,
-                            transition: 'width 0.3s ease'
-                          }}></div>
-                        </div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '10px' }}>
+                        <span>Heat Risk:</span>
+                        <span>{Math.round((insurance.heat_multiplier - 1) * 100)}%</span>
+                      </div>
+                      <div style={{ background: '#e5e7eb', height: '10px', borderRadius: '5px', marginBottom: '15px' }}>
+                        <div style={{ background: '#f59e0b', height: '100%', borderRadius: '5px', width: `${Math.min((insurance.heat_multiplier - 1) * 100 / 1.5, 100)}%` }}></div>
                       </div>
 
-                      {/* Storm Risk */}
-                      <div style={{ marginBottom: '15px' }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '5px', fontSize: '0.95rem' }}>
-                          <span style={{ fontWeight: '500' }}>Storm Risk:</span>
-                          <span style={{ fontWeight: '600', color: getColor(selectedCityRiskData.storm_risk) }}>
-                            {Math.round(selectedCityRiskData.storm_risk * 100)}%
-                          </span>
-                        </div>
-                        <div style={{ background: '#e5e7eb', height: '8px', borderRadius: '4px', overflow: 'hidden' }}>
-                          <div style={{
-                            background: getColor(selectedCityRiskData.storm_risk),
-                            height: '100%',
-                            borderRadius: '4px',
-                            width: `${Math.min(selectedCityRiskData.storm_risk * 100, 100)}%`,
-                            transition: 'width 0.3s ease'
-                          }}></div>
-                        </div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '10px' }}>
+                        <span>Storm Risk:</span>
+                        <span>{Math.round((insurance.storm_multiplier - 1) * 100)}%</span>
                       </div>
-
-                      {/* Climate Risk Index */}
-                      <div style={{ background: '#f3f4f6', padding: '10px 12px', borderRadius: '6px', marginTop: '10px' }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                          <span style={{ fontWeight: '500', fontSize: '0.95rem' }}>Climate Risk Index:</span>
-                          <span style={{ fontWeight: '700', fontSize: '1.1rem', color: getColor(selectedCityRiskData.climate_risk_index / 100) }}>
-                            {selectedCityRiskData.climate_risk_index}/100
-                          </span>
-                        </div>
-                        <p style={{ margin: '5px 0 0 0', fontSize: '0.85rem', color: '#666' }}>
-                          Risk Level: <strong style={{ color: getColor(selectedCityRiskData.climate_risk_index / 100) }}>
-                            {selectedCityRiskData.risk_level}
-                          </strong>
-                        </p>
+                      <div style={{ background: '#e5e7eb', height: '10px', borderRadius: '5px', marginBottom: '15px' }}>
+                        <div style={{ background: '#8b5cf6', height: '100%', borderRadius: '5px', width: `${Math.min((insurance.storm_multiplier - 1) * 100 / 2.0, 100)}%` }}></div>
                       </div>
                     </>
                   ) : (
@@ -388,35 +359,14 @@ function App() {
                   )}
                 </div>
 
-                {/* Insurance Impact Section */}
-                <div style={{ marginBottom: '25px', paddingBottom: '20px', borderBottom: '1px solid #eee' }}>
-                  <h4 style={{ margin: '0 0 15px 0', color: '#1f2937' }}>Insurance Impact</h4>
+                <div style={{ marginBottom: '20px' }}>
+                  <h4>Insurance Impact</h4>
                   {insurance ? (
                     <>
-                      <div style={{ background: '#f0fdf4', padding: '12px', borderRadius: '6px', marginBottom: '10px' }}>
-                        <p style={{ margin: '0 0 5px 0', fontSize: '0.9rem', color: '#666' }}>Base Premium (Annual)</p>
-                        <p style={{ margin: 0, fontSize: '1.3rem', fontWeight: '700', color: '#059669' }}>
-                          ${insurance.base_premium.toLocaleString('en-US', { maximumFractionDigits: 0 })}
-                        </p>
-                      </div>
-
-                      <div style={{ background: '#fef3c7', padding: '12px', borderRadius: '6px', marginBottom: '10px' }}>
-                        <p style={{ margin: '0 0 5px 0', fontSize: '0.9rem', color: '#666' }}>Adjusted Premium ({debouncedYear})</p>
-                        <p style={{ margin: 0, fontSize: '1.3rem', fontWeight: '700', color: '#d97706' }}>
-                          ${insurance.adjusted_premium.toLocaleString('en-US', { maximumFractionDigits: 0 })}
-                        </p>
-                      </div>
-
-                      <div style={{ background: '#f3f4f6', padding: '10px 12px', borderRadius: '6px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <span style={{ fontWeight: '500' }}>Total Multiplier:</span>
-                        <span style={{ fontWeight: '700', fontSize: '1.1rem', color: '#1f2937' }}>
-                          {insurance.total_multiplier.toFixed(2)}x
-                        </span>
-                      </div>
-
-                      <p style={{ fontSize: '0.85rem', color: '#666', marginTop: '12px', lineHeight: '1.4', fontStyle: 'italic' }}>
-                        {insurance.explanation}
-                      </p>
+                      <p><strong>Base Premium:</strong> ${insurance.base_premium}</p>
+                      <p><strong>Adjusted Premium:</strong> ${insurance.adjusted_premium}</p>
+                      <p><strong>Total Multiplier:</strong> {insurance.total_multiplier}x</p>
+                      <p style={{ fontSize: '0.9rem', color: '#6b7280', marginTop: '10px' }}>{insurance.explanation}</p>
                     </>
                   ) : (
                     <p style={{ color: '#ef4444' }}>Insurance data unavailable</p>
@@ -552,35 +502,23 @@ function App() {
 
                 {/* AI Analysis Section */}
                 <div>
-                  <h4 style={{ margin: '0 0 15px 0', color: '#1f2937' }}>AI Analysis & Recommendations</h4>
+                  <h4>AI Analysis</h4>
                   {narration ? (
                     <>
-                      <div style={{ background: '#eff6ff', padding: '12px', borderRadius: '6px', marginBottom: '15px' }}>
-                        <p style={{ margin: 0, lineHeight: '1.6', fontSize: '0.95rem', color: '#1e40af' }}>
-                          {narration.risk_brief}
-                        </p>
-                      </div>
-
+                      <p style={{ lineHeight: '1.5', marginBottom: '15px' }}>{narration.risk_brief}</p>
                       {narration.adaptation_actions && narration.adaptation_actions.length > 0 && (
                         <div>
-                          <h5 style={{ margin: '15px 0 10px 0', color: '#1f2937', fontSize: '0.95rem' }}>🛡️ Recommended Actions:</h5>
-                          <ul style={{ paddingLeft: '20px', margin: 0 }}>
+                          <h5>Recommended Actions:</h5>
+                          <ul style={{ paddingLeft: '20px' }}>
                             {narration.adaptation_actions.map((action, index) => (
-                              <li key={index} style={{
-                                marginBottom: '8px',
-                                fontSize: '0.9rem',
-                                lineHeight: '1.5',
-                                color: '#374151',
-                              }}>
-                                {action}
-                              </li>
+                              <li key={index} style={{ marginBottom: '5px', fontSize: '0.9rem' }}>{action}</li>
                             ))}
                           </ul>
                         </div>
                       )}
                     </>
                   ) : (
-                    <p style={{ color: '#ef4444' }}>Analysis unavailable</p>
+                    <p>Analysis unavailable</p>
                   )}
                 </div>
               </div>

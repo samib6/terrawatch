@@ -118,7 +118,7 @@ async def get_cities(year: int = Query(2024, ge=2024, le=2050, description="Proj
     Get all cities with risk data for a given year
     """
     try:
-        from risk_engine import get_all_cities_risk
+        from backend.risk_engine import get_all_cities_risk
         cities_data = get_all_cities_risk(year)
         return cities_data
     except Exception as e:
@@ -186,7 +186,7 @@ async def narrate_risk(
     """
     try:
         # Find city coordinates from our data
-        from risk_engine import data
+        from backend.risk_engine import data
         city_row = data[data['city'].str.lower() == city.lower()]
         if city_row.empty:
             raise HTTPException(status_code=404, detail=f"City '{city}' not found")
@@ -259,7 +259,7 @@ async def get_insurance(
     """
     try:
         # Find city coordinates from our data
-        from risk_engine import data
+        from backend.risk_engine import data
         city_row = data[data['city'].str.lower() == city.lower()]
         if city_row.empty:
             raise HTTPException(status_code=404, detail=f"City '{city}' not found")
@@ -329,161 +329,6 @@ async def analyze_satellite(
     
     except Exception as e:
         logger.error(f"Error analyzing satellite imagery: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-# ============================================================================
-# T8: REAL-TIME RISK ANALYSIS ENDPOINT
-# ============================================================================
-
-@app.get("/api/realtime-analysis")
-async def get_realtime_analysis(
-    lat: float = Query(..., description="Latitude"),
-    lng: float = Query(..., description="Longitude"),
-    year: int = Query(2024, ge=2024, le=2050, description="Projection year"),
-    city: str = Query(None, description="Optional city name for better AI context")
-):
-    """
-    T8: Real-time risk analysis combining current and projected data
-    
-    Provides:
-    - Risk metrics for current year
-    - Temporal risk trends (2024 vs 2035 vs 2050)
-    - Risk acceleration indicators
-    - Damage projections
-    - AI-generated insights
-    - Insurance implications
-    
-    This endpoint is optimized for interactive sliders and location changes
-    """
-    try:
-        # Get risk data for target year
-        current_risk = get_risk_data(lat, lng, year)
-        if current_risk is None:
-            raise HTTPException(status_code=404, detail="Risk data unavailable for this location")
-        
-        # Get comparative data for trend analysis
-        risk_2024 = get_risk_data(lat, lng, 2024)
-        risk_2035 = get_risk_data(lat, lng, 2035)
-        risk_2050 = get_risk_data(lat, lng, 2050)
-        
-        # Calculate risk acceleration (how fast risks are increasing)
-        flood_acceleration = (risk_2050["flood_risk"] - risk_2024["flood_risk"]) / 26  # Per year
-        heat_acceleration = (risk_2050["heat_risk"] - risk_2024["heat_risk"]) / 26
-        storm_acceleration = (risk_2050["storm_risk"] - risk_2024["storm_risk"]) / 26
-        
-        # Determine risk trajectory
-        def get_trajectory(risk_2024, risk_2035, risk_2050):
-            if risk_2024 >= risk_2035 >= risk_2050:
-                return "Declining"
-            elif risk_2024 <= risk_2035 <= risk_2050:
-                if (risk_2050 - risk_2024) > 0.2:
-                    return "Rapidly Increasing"
-                else:
-                    return "Gradually Increasing"
-            else:
-                return "Volatile"
-        
-        flood_trajectory = get_trajectory(risk_2024["flood_risk"], risk_2035["flood_risk"], risk_2050["flood_risk"])
-        heat_trajectory = get_trajectory(risk_2024["heat_risk"], risk_2035["heat_risk"], risk_2050["heat_risk"])
-        storm_trajectory = get_trajectory(risk_2024["storm_risk"], risk_2035["storm_risk"], risk_2050["storm_risk"])
-        
-        # Calculate time-to-critical (when risk crosses 0.7)
-        def years_to_critical(risk_2024, risk_2035, risk_2050, threshold=0.7):
-            if risk_2024 >= threshold:
-                return 0
-            
-            # Linear interpolation
-            risks = [(2024, risk_2024), (2035, risk_2035), (2050, risk_2050)]
-            for i, (y1, r1) in enumerate(risks[:-1]):
-                y2, r2 = risks[i + 1]
-                if r1 < threshold <= r2:
-                    # Interpolate
-                    years_diff = y2 - y1
-                    risk_diff = r2 - r1
-                    if risk_diff > 0:
-                        years_to_reach = y1 + (threshold - r1) / risk_diff * years_diff
-                        return max(0, int(years_to_reach - 2024))
-            
-            return None  # Will exceed in 2050 or beyond
-        
-        flood_years_to_critical = years_to_critical(risk_2024["flood_risk"], risk_2035["flood_risk"], risk_2050["flood_risk"])
-        heat_years_to_critical = years_to_critical(risk_2024["heat_risk"], risk_2035["heat_risk"], risk_2050["heat_risk"])
-        storm_years_to_critical = years_to_critical(risk_2024["storm_risk"], risk_2035["storm_risk"], risk_2050["storm_risk"])
-        
-        # Get AI-generated insights
-        city_name = city or current_risk.get("city", "This location")
-        narration_response = None
-        try:
-            narration_response = await ai_client.generate_narration(
-                city=city_name,
-                latitude=lat,
-                longitude=lng,
-                year=year,
-                flood_risk=current_risk["flood_risk"],
-                heat_risk=current_risk["heat_risk"],
-                storm_risk=current_risk["storm_risk"],
-                damage_estimate=current_risk["damage_estimate"]
-            )
-        except Exception as e:
-            logger.warning(f"Failed to generate narration: {e}")
-            narration_response = {
-                "risk_brief": f"Climate risk analysis for {city_name} in {year}",
-                "adaptation_actions": ["Monitor local climate updates", "Prepare emergency plans"]
-            }
-        
-        # Return comprehensive real-time analysis
-        return {
-            "timestamp": {
-                "query_year": year,
-                "queried_at": "2024-01-15T10:30:00Z"  # Would be actual timestamp
-            },
-            "location": {
-                "city": city_name,
-                "latitude": lat,
-                "longitude": lng
-            },
-            "current_risks": {
-                "flood": round(current_risk["flood_risk"], 3),
-                "heat": round(current_risk["heat_risk"], 3),
-                "storm": round(current_risk["storm_risk"], 3),
-                "composite_index": current_risk["climate_risk_index"],
-                "risk_level": current_risk["risk_level"],
-                "damage_estimate_usd": int(current_risk["damage_estimate"])
-            },
-            "risk_trends": {
-                "flood": {
-                    "value_2024": round(risk_2024["flood_risk"], 3),
-                    "value_2035": round(risk_2035["flood_risk"], 3),
-                    "value_2050": round(risk_2050["flood_risk"], 3),
-                    "trajectory": flood_trajectory,
-                    "yearly_acceleration": round(flood_acceleration, 4),
-                    "years_to_critical": flood_years_to_critical
-                },
-                "heat": {
-                    "value_2024": round(risk_2024["heat_risk"], 3),
-                    "value_2035": round(risk_2035["heat_risk"], 3),
-                    "value_2050": round(risk_2050["heat_risk"], 3),
-                    "trajectory": heat_trajectory,
-                    "yearly_acceleration": round(heat_acceleration, 4),
-                    "years_to_critical": heat_years_to_critical
-                },
-                "storm": {
-                    "value_2024": round(risk_2024["storm_risk"], 3),
-                    "value_2035": round(risk_2035["storm_risk"], 3),
-                    "value_2050": round(risk_2050["storm_risk"], 3),
-                    "trajectory": storm_trajectory,
-                    "yearly_acceleration": round(storm_acceleration, 4),
-                    "years_to_critical": storm_years_to_critical
-                }
-            },
-            "ai_insights": narration_response,
-            "projection_scenario": "IPCC SSP2-4.5 (Intermediate emissions)"
-        }
-    
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error in realtime-analysis endpoint: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 # ============================================================================
