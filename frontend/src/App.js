@@ -35,7 +35,7 @@ function App() {
   }, [selectedYear]);
 
   useEffect(() => {
-    axios.get(`${config.API_BASE}/api/risk?year=${debouncedYear}`)
+    axios.get(`${config.API_BASE}/api/cities?year=${debouncedYear}`)
       .then(response => {
         setDisasters(response.data);
         setBackendError(false);
@@ -65,18 +65,16 @@ function App() {
       axios.get(`${config.API_BASE}/api/narrate?city=${encodeURIComponent(disaster.city)}&year=${debouncedYear}`),
       axios.get(`${config.API_BASE}/api/insurance?city=${encodeURIComponent(disaster.city)}&year=${debouncedYear}`)
     ]).then(([narrateRes, insuranceRes]) => {
-      setNarration(narrateRes.data.narration);
+      setNarration(narrateRes.data);
       setInsurance(insuranceRes.data);
       setLoading(false);
     }).catch(error => {
       console.error('Failed to fetch city data:', error);
-      setNarration('Unable to load AI analysis at this time. Please try again later.');
-      setInsurance({
-        floodPercent: Math.round(disaster.risk * 100),
-        heatPercent: Math.round((1 - disaster.risk) * 100),
-        damage: 'Data unavailable',
-        premiumChange: 'Data unavailable'
+      setNarration({
+        risk_brief: 'Unable to load AI analysis at this time. Please try again later.',
+        adaptation_actions: []
       });
+      setInsurance(null);
       setLoading(false);
     });
   };
@@ -86,12 +84,23 @@ function App() {
 
     axios.get(`${config.API_BASE}/api/search?q=${encodeURIComponent(searchQuery)}`)
       .then(response => {
-        const result = response.data;
-        if (result && result.lat && result.lng) {
+        const results = response.data;
+        if (results && results.length > 0) {
+          const result = results[0]; // Take the first result
           // Fly to location
-          setFlyTo({ center: [result.lat, result.lng], zoom: 10 });
-          // Add marker for searched city
-          setSearchedCity(result);
+          setFlyTo({ center: [result.latitude, result.longitude], zoom: 10 });
+          // Create a city object for the marker (without risk data initially)
+          const searchedCityData = {
+            city: result.city,
+            lat: result.latitude,
+            lng: result.longitude,
+            risk: 0.5, // Default risk for searched cities
+            risk_level: 'Unknown',
+            type: 'Searched Location'
+          };
+          setSearchedCity(searchedCityData);
+        } else {
+          alert(`City "${searchQuery}" not found. Please try a different city name.`);
         }
       }).catch(error => {
         console.error('Failed to search for city:', error);
@@ -194,7 +203,7 @@ function App() {
               boxShadow: '0 2px 10px rgba(0,0,0,0.2)',
               zIndex: 1000
             }}>
-              ⚠️ Backend service unavailable. Please ensure the backend server is running on port 8000.
+              ⚠️ Backend service unavailable. Please ensure the backend server is running on port 8001.
             </div>
           )}
 
@@ -239,18 +248,26 @@ function App() {
                     <>
                       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '10px' }}>
                         <span>Flood Risk:</span>
-                        <span>{insurance.floodPercent}%</span>
+                        <span>{Math.round((insurance.flood_multiplier - 1) * 100)}%</span>
                       </div>
                       <div style={{ background: '#e5e7eb', height: '10px', borderRadius: '5px', marginBottom: '15px' }}>
-                        <div style={{ background: getColor(insurance.floodPercent / 100), height: '100%', borderRadius: '5px', width: `${insurance.floodPercent}%` }}></div>
+                        <div style={{ background: getColor((insurance.flood_multiplier - 1) / 2.5), height: '100%', borderRadius: '5px', width: `${Math.min((insurance.flood_multiplier - 1) * 100 / 2.5, 100)}%` }}></div>
                       </div>
 
                       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '10px' }}>
                         <span>Heat Risk:</span>
-                        <span>{insurance.heatPercent}%</span>
+                        <span>{Math.round((insurance.heat_multiplier - 1) * 100)}%</span>
                       </div>
                       <div style={{ background: '#e5e7eb', height: '10px', borderRadius: '5px', marginBottom: '15px' }}>
-                        <div style={{ background: '#f59e0b', height: '100%', borderRadius: '5px', width: `${insurance.heatPercent}%` }}></div>
+                        <div style={{ background: '#f59e0b', height: '100%', borderRadius: '5px', width: `${Math.min((insurance.heat_multiplier - 1) * 100 / 1.5, 100)}%` }}></div>
+                      </div>
+
+                      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '10px' }}>
+                        <span>Storm Risk:</span>
+                        <span>{Math.round((insurance.storm_multiplier - 1) * 100)}%</span>
+                      </div>
+                      <div style={{ background: '#e5e7eb', height: '10px', borderRadius: '5px', marginBottom: '15px' }}>
+                        <div style={{ background: '#8b5cf6', height: '100%', borderRadius: '5px', width: `${Math.min((insurance.storm_multiplier - 1) * 100 / 2.0, 100)}%` }}></div>
                       </div>
                     </>
                   ) : (
@@ -259,22 +276,38 @@ function App() {
                 </div>
 
                 <div style={{ marginBottom: '20px' }}>
-                  <h4>Projected Damage</h4>
-                  <p style={{ fontSize: '1.2rem', fontWeight: 'bold', color: insurance ? '#ef4444' : '#6b7280' }}>
-                    {insurance?.damage || 'Data unavailable'}
-                  </p>
-                </div>
-
-                <div style={{ marginBottom: '20px' }}>
-                  <h4>Insurance Premium Change</h4>
-                  <p style={{ color: insurance?.premiumChange?.includes('+') ? '#ef4444' : '#22c55e' }}>
-                    {insurance?.premiumChange || 'Data unavailable'}
-                  </p>
+                  <h4>Insurance Impact</h4>
+                  {insurance ? (
+                    <>
+                      <p><strong>Base Premium:</strong> ${insurance.base_premium}</p>
+                      <p><strong>Adjusted Premium:</strong> ${insurance.adjusted_premium}</p>
+                      <p><strong>Total Multiplier:</strong> {insurance.total_multiplier}x</p>
+                      <p style={{ fontSize: '0.9rem', color: '#6b7280', marginTop: '10px' }}>{insurance.explanation}</p>
+                    </>
+                  ) : (
+                    <p style={{ color: '#ef4444' }}>Insurance data unavailable</p>
+                  )}
                 </div>
 
                 <div>
                   <h4>AI Analysis</h4>
-                  <p style={{ lineHeight: '1.5' }}>{narration || 'Analysis unavailable'}</p>
+                  {narration ? (
+                    <>
+                      <p style={{ lineHeight: '1.5', marginBottom: '15px' }}>{narration.risk_brief}</p>
+                      {narration.adaptation_actions && narration.adaptation_actions.length > 0 && (
+                        <div>
+                          <h5>Recommended Actions:</h5>
+                          <ul style={{ paddingLeft: '20px' }}>
+                            {narration.adaptation_actions.map((action, index) => (
+                              <li key={index} style={{ marginBottom: '5px', fontSize: '0.9rem' }}>{action}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+                    </>
+                  ) : (
+                    <p>Analysis unavailable</p>
+                  )}
                 </div>
               </div>
             )}
